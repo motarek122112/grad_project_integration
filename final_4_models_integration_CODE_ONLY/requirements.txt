@@ -9,8 +9,7 @@ numpy
 scipy
 torch
 torchvision
-opencv-python
-pillow
+opencv-python-headlesspillow
 
 # Sign Language -> Text
 mediapipe
@@ -27,7 +26,7 @@ unidecode
 
 streamlit>=1.40,<2
 streamlit-webrtc>=0.72,<1
-av
+av>=12
 kokoro>=0.9.4
 soundfile
 

@@ -1,369 +1,420 @@
 from __future__ import annotations
 
 import sys
-import time
 import tempfile
 import threading
+import time
 from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import cv2
-import numpy as np
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+try:
+    import av  # noqa: F401
+    import cv2
+    from streamlit_webrtc import RTCConfiguration, WebRtcMode, webrtc_streamer
+    WEBRTC_AVAILABLE = True
+    WEBRTC_IMPORT_ERROR = ""
+except Exception as exc:
+    WEBRTC_AVAILABLE = False
+    WEBRTC_IMPORT_ERROR = str(exc)
+
+try:
+    import mediapipe as mp  # noqa: F401
+    MEDIAPIPE_AVAILABLE = True
+    MEDIAPIPE_ERROR = ""
+except Exception as exc:
+    MEDIAPIPE_AVAILABLE = False
+    MEDIAPIPE_ERROR = str(exc)
+
 from model_adapters.sign_language import predict_single_sign
 from model_adapters.text_to_speech import synthesize_speech
 from model_adapters.speech_to_text import transcribe_audio
 
-try:
-    from streamlit_webrtc import WebRtcMode, VideoProcessorBase, webrtc_streamer
-except Exception:  # pragma: no cover
-    WebRtcMode = None
-    VideoProcessorBase = object
-    webrtc_streamer = None
+_FRAME_BUFFER: deque = deque(maxlen=180)
+_FRAME_LOCK = threading.Lock()
 
-
-# ================================
-# Page state
-# ================================
 
 def _init_state() -> None:
     defaults = {
-        "live_words": [],
-        "live_glosses": [],
-        "live_last_text": "---",
-        "live_last_gloss": "---",
-        "live_last_confidence": 0.0,
-        "live_last_prediction_at": 0.0,
-        "live_last_audio": None,
-        "live_stt_text": "",
-        "live_status": "Open the camera, then sign clearly in front of it.",
-        "live_busy": False,
+        "auto_live_running": False,
+        "sentence_words": [],
+        "gloss_sequence": [],
+        "last_candidate": "",
+        "stable_count": 0,
+        "last_accept_time": 0.0,
+        "current_prediction": "---",
+        "current_confidence": None,
+        "last_raw": {},
+        "last_error": "",
+        "last_audio_path": "",
+        "stt_text": "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
 
-_init_state()
+def _video_callback(frame):
+    img = frame.to_ndarray(format="bgr24")
+    with _FRAME_LOCK:
+        _FRAME_BUFFER.append((time.time(), img.copy()))
+    return frame
 
 
-# ================================
-# Helpers
-# ================================
-
-def _user_profile() -> Dict[str, Any]:
-    return st.session_state.get("user", {}) or {}
-
-
-def _sentence() -> str:
-    words = [str(w).strip() for w in st.session_state.live_words if str(w).strip()]
-    return " ".join(words).strip()
-
-
-def _append_prediction(text: str, gloss: str, confidence: float, repeat_cooldown_sec: float) -> bool:
-    text = str(text or "").strip()
-    gloss = str(gloss or "").strip()
-    if not text and gloss:
-        text = gloss
-    if not text:
-        return False
-
+def _get_recent_frames(seconds: float) -> List[Any]:
     now = time.time()
-    last_word = st.session_state.live_words[-1] if st.session_state.live_words else None
-    last_at = float(st.session_state.get("live_last_prediction_at", 0.0) or 0.0)
+    with _FRAME_LOCK:
+        return [img for ts, img in list(_FRAME_BUFFER) if now - ts <= seconds]
 
-    # Avoid repeated same sign when the hand stays in front of the camera.
-    if last_word and last_word.lower() == text.lower() and (now - last_at) < repeat_cooldown_sec:
-        st.session_state.live_status = "Same sign ignored to avoid repetition."
+
+def _write_frames_to_video(frames: List[Any], fps: float = 24.0) -> Optional[Path]:
+    if not frames:
+        return None
+    h, w = frames[0].shape[:2]
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    tmp.close()
+    out_path = Path(tmp.name)
+    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), float(fps), (w, h))
+    if not writer.isOpened():
+        return None
+    for img in frames:
+        if img.shape[:2] != (h, w):
+            img = cv2.resize(img, (w, h))
+        writer.write(img)
+    writer.release()
+    return out_path
+
+
+def _extract_prediction(result: Dict[str, Any]) -> Tuple[str, str, float, Dict[str, Any]]:
+    if not isinstance(result, dict):
+        return "", "", 0.0, {}
+    text = str(result.get("text") or result.get("word") or result.get("sentence") or "").strip()
+    gloss = str(result.get("gloss") or result.get("label") or "").strip()
+    conf = result.get("confidence", 0.0)
+    top_k = result.get("top_k") or result.get("top_predictions") or []
+    if isinstance(top_k, list) and top_k:
+        top1 = top_k[0] or {}
+        text = text or str(top1.get("text") or top1.get("word") or "").strip()
+        gloss = gloss or str(top1.get("gloss") or top1.get("label") or "").strip()
+        conf = conf or top1.get("confidence") or top1.get("score") or top1.get("probability") or 0.0
+    try:
+        conf = float(conf or 0.0)
+    except Exception:
+        conf = 0.0
+    display = text or gloss
+    return display, gloss or display, conf, result
+
+
+def _accept_word(word: str, gloss: str, repeat_cooldown_ms: int) -> bool:
+    if not word:
         return False
-
-    st.session_state.live_words.append(text)
-    st.session_state.live_glosses.append(gloss or text)
-    st.session_state.live_last_prediction_at = now
-    st.session_state.live_status = "Sign accepted."
+    now = time.time()
+    last_time = float(st.session_state.get("last_accept_time") or 0.0)
+    if now - last_time < repeat_cooldown_ms / 1000.0:
+        return False
+    words = st.session_state.get("sentence_words", [])
+    if words and str(words[-1]).lower() == str(word).lower():
+        return False
+    words.append(word)
+    st.session_state["sentence_words"] = words
+    glosses = st.session_state.get("gloss_sequence", [])
+    glosses.append(gloss or word)
+    st.session_state["gloss_sequence"] = glosses
+    st.session_state["last_accept_time"] = now
     return True
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
+def _process_live_chunk(
+    *,
+    top_k: int,
+    chunk_ms: int,
+    live_min_confidence: float,
+    release_confirm_confidence: float,
+    hold_confirm_confidence: float,
+    stable_count_required: int,
+    repeat_cooldown_ms: int,
+) -> None:
+    frames = _get_recent_frames(seconds=max(0.5, chunk_ms / 1000.0))
+    if len(frames) < 4:
+        st.session_state["last_error"] = "Waiting for enough camera frames..."
+        return
+    video_path = None
     try:
-        return float(value)
-    except Exception:
-        return default
+        fps = min(30, max(12, len(frames) / max(0.5, chunk_ms / 1000.0)))
+        video_path = _write_frames_to_video(frames, fps=fps)
+        if not video_path:
+            st.session_state["last_error"] = "Could not create temporary video chunk."
+            return
+        result = predict_single_sign(video_path=video_path, top_k=top_k)
+        if not result.get("ok", True):
+            st.session_state["last_error"] = result.get("error", "Sign prediction failed.")
+            st.session_state["last_raw"] = result
+            return
+        word, gloss, conf, raw = _extract_prediction(result)
+        st.session_state["current_prediction"] = word or "---"
+        st.session_state["current_confidence"] = conf
+        st.session_state["last_raw"] = raw
+        st.session_state["last_error"] = ""
+
+        if not word or conf < release_confirm_confidence:
+            st.session_state["last_candidate"] = ""
+            st.session_state["stable_count"] = 0
+            return
+
+        if conf >= hold_confirm_confidence:
+            _accept_word(word, gloss, repeat_cooldown_ms)
+            st.session_state["last_candidate"] = word
+            st.session_state["stable_count"] = stable_count_required
+            return
+
+        if conf >= live_min_confidence:
+            if st.session_state.get("last_candidate") == word:
+                st.session_state["stable_count"] = int(st.session_state.get("stable_count") or 0) + 1
+            else:
+                st.session_state["last_candidate"] = word
+                st.session_state["stable_count"] = 1
+            if int(st.session_state["stable_count"]) >= int(stable_count_required):
+                _accept_word(word, gloss, repeat_cooldown_ms)
+    except Exception as exc:
+        st.session_state["last_error"] = str(exc)
+    finally:
+        try:
+            if video_path:
+                Path(video_path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
-def _frames_to_video(frames: List[np.ndarray], fps: int = 12) -> Optional[Path]:
-    if not frames:
-        return None
-
-    clean_frames: List[np.ndarray] = []
-    for frame in frames:
-        if frame is None:
-            continue
-        arr = np.asarray(frame)
-        if arr.ndim != 3 or arr.shape[2] != 3:
-            continue
-        clean_frames.append(arr)
-
-    if not clean_frames:
-        return None
-
-    height, width = clean_frames[0].shape[:2]
-    temp_path = Path(tempfile.NamedTemporaryFile(delete=False, suffix=".avi").name)
-    writer = cv2.VideoWriter(
-        str(temp_path),
-        cv2.VideoWriter_fourcc(*"XVID"),
-        float(fps),
-        (int(width), int(height)),
-    )
-
-    for frame in clean_frames:
-        if frame.shape[:2] != (height, width):
-            frame = cv2.resize(frame, (width, height))
-        writer.write(frame)
-
-    writer.release()
-    return temp_path
+def _speak_sentence() -> None:
+    sentence = " ".join(st.session_state.get("sentence_words", [])).strip()
+    if not sentence:
+        st.warning("No sentence to speak yet.")
+        return
+    user = st.session_state.get("user", {}) or {}
+    result = synthesize_speech(text=sentence, gender=user.get("gender"), age=user.get("age"))
+    if not result.get("ok"):
+        st.error(result.get("error", "TTS failed."))
+        return
+    st.session_state["last_audio_path"] = result.get("audio_path", "")
 
 
-def _pick_prediction_text(result: Dict[str, Any]) -> Tuple[str, str, float]:
-    text = str(result.get("text") or result.get("sentence") or result.get("word") or "").strip()
-    gloss = str(result.get("gloss") or result.get("label") or "").strip()
-    confidence = _safe_float(result.get("confidence"), 0.0)
-
-    top_k = result.get("top_k") or []
-    if isinstance(top_k, list) and top_k:
-        top1 = top_k[0] if isinstance(top_k[0], dict) else {}
-        text = text or str(top1.get("text") or top1.get("word") or top1.get("gloss") or top1.get("label") or "").strip()
-        gloss = gloss or str(top1.get("gloss") or top1.get("label") or text or "").strip()
-        confidence = confidence or _safe_float(top1.get("confidence") or top1.get("score") or top1.get("probability"), 0.0)
-
-    return text, gloss, confidence
+def _undo_last() -> None:
+    words = st.session_state.get("sentence_words", [])
+    glosses = st.session_state.get("gloss_sequence", [])
+    if words:
+        words.pop()
+    if glosses:
+        glosses.pop()
+    st.session_state["sentence_words"] = words
+    st.session_state["gloss_sequence"] = glosses
 
 
-# ================================
-# WebRTC processor
-# ================================
-
-class LiveSignVideoProcessor(VideoProcessorBase):
-    def __init__(self) -> None:
-        self.lock = threading.Lock()
-        self.frames: deque[Tuple[float, np.ndarray]] = deque(maxlen=180)
-
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        now = time.time()
-        with self.lock:
-            self.frames.append((now, img.copy()))
-        return frame
-
-    def get_recent_frames(self, seconds: float = 1.25, max_frames: int = 36) -> List[np.ndarray]:
-        now = time.time()
-        with self.lock:
-            selected = [img for ts, img in list(self.frames) if now - ts <= seconds]
-
-        if not selected:
-            return []
-
-        # Downsample to keep inference fast.
-        if len(selected) > max_frames:
-            idx = np.linspace(0, len(selected) - 1, max_frames).astype(int)
-            selected = [selected[i] for i in idx]
-
-        return selected
+def _clear_sentence() -> None:
+    for key, value in {
+        "sentence_words": [],
+        "gloss_sequence": [],
+        "last_candidate": "",
+        "stable_count": 0,
+        "current_prediction": "---",
+        "current_confidence": None,
+        "last_raw": {},
+        "last_audio_path": "",
+    }.items():
+        st.session_state[key] = value
 
 
-# ================================
-# UI
-# ================================
+def _run_stt(audio_file) -> None:
+    if audio_file is None:
+        st.warning("Record or upload audio first.")
+        return
+    suffix = Path(getattr(audio_file, "name", "recording.wav")).suffix or ".wav"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(audio_file.getbuffer())
+        audio_path = Path(tmp.name)
+    try:
+        result = transcribe_audio(audio_path=audio_path)
+        if not result.get("ok"):
+            st.error(result.get("error", "Speech to text failed."))
+            with st.expander("Raw STT result", expanded=False):
+                st.json(result)
+            return
+        st.session_state["stt_text"] = result.get("text") or result.get("transcription") or result.get("sentence") or ""
+    finally:
+        try:
+            audio_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+_init_state()
 
 st.title("🎥 Live Sign Translation")
-st.caption("Online Streamlit live mode — no separate FastAPI server required.")
+st.caption("Auto live translation runs inside Streamlit Cloud — no separate FastAPI server required.")
 
-st.info("This page is deployment-friendly: camera capture, sign prediction, speech output, and STT run inside Streamlit.")
+st.markdown(
+    """
+    <style>
+    video {
+        width: 100% !important;
+        max-height: 620px !important;
+        object-fit: cover !important;
+        border-radius: 18px !important;
+        background: #000 !important;
+    }
+    .result-card {
+        padding: 18px;
+        border-radius: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(15, 23, 42, 0.20);
+        margin-bottom: 14px;
+    }
+    .big-live-word {
+        font-size: 42px;
+        font-weight: 800;
+        line-height: 1.15;
+    }
+    .soft-muted {
+        opacity: 0.75;
+        font-size: 14px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 with st.expander("Live settings", expanded=False):
     c1, c2, c3 = st.columns(3)
     with c1:
-        clip_seconds = st.slider("Clip seconds", 0.60, 2.50, 1.20, 0.10)
         top_k = st.slider("Top-K", 1, 10, 5)
+        chunk_ms = st.slider("Chunk duration ms", 600, 2500, 1000, 100)
     with c2:
-        min_confidence = st.slider("Minimum confidence", 0.00, 0.95, 0.30, 0.05)
-        repeat_cooldown_sec = st.slider("Repeat cooldown", 0.50, 5.00, 2.50, 0.25)
+        loop_gap_ms = st.slider("Loop gap ms", 100, 1000, 200, 50)
+        repeat_cooldown_ms = st.slider("Repeat cooldown ms", 500, 5000, 2500, 100)
     with c3:
-        max_frames = st.slider("Max frames per prediction", 12, 64, 36, 4)
-        auto_refresh_hint = st.checkbox("Show simple interface", value=True)
+        live_min_confidence = st.slider("Min confidence", 0.05, 0.95, 0.30, 0.01)
+        hold_confirm_confidence = st.slider("Hold confirm confidence", 0.05, 0.95, 0.62, 0.01)
+        release_confirm_confidence = st.slider("Release confidence", 0.01, 0.80, 0.15, 0.01)
+    stable_count_required = st.slider("Stable count required", 1, 5, 1, 1)
 
-if webrtc_streamer is None:
-    st.error("streamlit-webrtc is not installed. Add streamlit-webrtc and av to requirements.txt, then redeploy.")
+if not WEBRTC_AVAILABLE:
+    st.error("streamlit-webrtc / av is required. Add streamlit-webrtc and av to requirements.txt, then redeploy.")
     st.code("streamlit-webrtc>=0.72,<1\nav>=12", language="text")
+    st.caption(WEBRTC_IMPORT_ERROR)
     st.stop()
 
-left, right = st.columns([1.15, 0.85])
+if not MEDIAPIPE_AVAILABLE:
+    st.error("mediapipe is required for the updated sign model.")
+    st.code("mediapipe==0.10.14", language="text")
+    st.caption(MEDIAPIPE_ERROR)
+    st.stop()
+
+RTC_CONFIG = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+
+left, right = st.columns([1.25, 1.0], gap="large")
 
 with left:
     st.subheader("Camera")
-    webrtc_ctx = webrtc_streamer(
-        key="ishara-online-live-sign",
+    ctx = webrtc_streamer(
+        key="ishara-auto-live-camera",
         mode=WebRtcMode.SENDRECV,
-        video_processor_factory=LiveSignVideoProcessor,
-        media_stream_constraints={"video": True, "audio": False},
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        rtc_configuration=RTC_CONFIG,
+        media_stream_constraints={
+            "video": {
+                "width": {"ideal": 1280},
+                "height": {"ideal": 720},
+                "frameRate": {"ideal": 30, "max": 30},
+                "facingMode": "user",
+            },
+            "audio": False,
+        },
+        video_frame_callback=_video_callback,
         async_processing=True,
     )
 
     b1, b2, b3, b4 = st.columns(4)
+    with b1:
+        if st.button("Start Auto", type="primary", use_container_width=True):
+            st.session_state["auto_live_running"] = True
+            st.rerun()
+    with b2:
+        if st.button("Stop", use_container_width=True):
+            st.session_state["auto_live_running"] = False
+            st.rerun()
+    with b3:
+        if st.button("Undo", use_container_width=True):
+            _undo_last()
+            st.rerun()
+    with b4:
+        if st.button("Clear", use_container_width=True):
+            _clear_sentence()
+            st.rerun()
 
-    predict_now = b1.button("Predict Sign", type="primary", use_container_width=True)
-    undo = b2.button("Undo", use_container_width=True)
-    clear = b3.button("Clear", use_container_width=True)
-    speak = b4.button("Speak", use_container_width=True)
+    if st.button("Speak Sentence", use_container_width=True):
+        _speak_sentence()
 
-    if undo and st.session_state.live_words:
-        st.session_state.live_words.pop()
-        if st.session_state.live_glosses:
-            st.session_state.live_glosses.pop()
-        st.session_state.live_status = "Last sign removed."
+    if st.session_state.get("last_audio_path"):
+        st.audio(st.session_state["last_audio_path"])
 
-    if clear:
-        st.session_state.live_words = []
-        st.session_state.live_glosses = []
-        st.session_state.live_last_text = "---"
-        st.session_state.live_last_gloss = "---"
-        st.session_state.live_last_confidence = 0.0
-        st.session_state.live_last_audio = None
-        st.session_state.live_status = "Sentence cleared."
-
-    if predict_now:
-        if not webrtc_ctx.video_processor:
-            st.warning("Open the camera first.")
-        else:
-            frames = webrtc_ctx.video_processor.get_recent_frames(seconds=float(clip_seconds), max_frames=int(max_frames))
-            if not frames:
-                st.warning("No camera frames yet. Wait one second and try again.")
-            else:
-                video_path = _frames_to_video(frames, fps=12)
-                if video_path is None:
-                    st.error("Could not create a temporary video clip.")
-                else:
-                    with st.spinner("Predicting current sign..."):
-                        result = predict_single_sign(video_path=video_path, top_k=int(top_k))
-                    try:
-                        video_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-
-                    if not result.get("ok"):
-                        st.error(result.get("error", "Prediction failed."))
-                        with st.expander("Debug", expanded=False):
-                            st.json(result)
-                    else:
-                        text, gloss, conf = _pick_prediction_text(result)
-                        st.session_state.live_last_text = text or "---"
-                        st.session_state.live_last_gloss = gloss or text or "---"
-                        st.session_state.live_last_confidence = conf
-
-                        if conf >= float(min_confidence):
-                            _append_prediction(text, gloss, conf, repeat_cooldown_sec=float(repeat_cooldown_sec))
-                        else:
-                            st.session_state.live_status = "Prediction ignored because confidence is below threshold."
-
-    if speak:
-        sentence = _sentence()
-        if not sentence:
-            st.warning("No sentence to speak yet.")
-        else:
-            profile = _user_profile()
-            gender = profile.get("gender")
-            age = profile.get("age")
-            with st.spinner("Generating speech..."):
-                tts_result = synthesize_speech(sentence, gender=gender, age=age)
-            if not tts_result.get("ok"):
-                st.error(tts_result.get("error", "TTS failed."))
-            else:
-                st.session_state.live_last_audio = tts_result.get("audio_path")
-                st.success("Speech generated.")
+    if st.session_state.get("last_error"):
+        st.warning(st.session_state["last_error"])
 
 with right:
-    st.subheader("Current Output")
+    conf = st.session_state.get("current_confidence")
+    conf_text = "---" if conf is None else f"{float(conf):.3f}"
     st.markdown(
         f"""
-        <div style="padding:18px;border-radius:16px;background:#f8fafc;border:1px solid #e5e7eb;margin-bottom:12px;">
-            <div style="font-size:13px;color:#64748b;margin-bottom:4px;">Current prediction</div>
-            <div style="font-size:30px;font-weight:800;color:#0f172a;">{st.session_state.live_last_text}</div>
-            <div style="font-size:13px;color:#64748b;margin-top:8px;">Confidence: {float(st.session_state.live_last_confidence or 0):.3f}</div>
-        </div>
-        <div style="padding:18px;border-radius:16px;background:#ffffff;border:1px solid #e5e7eb;margin-bottom:12px;">
-            <div style="font-size:13px;color:#64748b;margin-bottom:4px;">Gloss sequence</div>
-            <div style="font-size:18px;font-weight:700;color:#0f172a;">{' + '.join(st.session_state.live_glosses) if st.session_state.live_glosses else '---'}</div>
-        </div>
-        <div style="padding:18px;border-radius:16px;background:#ffffff;border:1px solid #e5e7eb;">
-            <div style="font-size:13px;color:#64748b;margin-bottom:4px;">English sentence</div>
-            <div style="font-size:24px;font-weight:800;color:#0f172a;">{_sentence() or '---'}</div>
+        <div class="result-card">
+            <div class="soft-muted">Current Prediction</div>
+            <div class="big-live-word">{st.session_state.get("current_prediction", "---")}</div>
+            <div class="soft-muted">Confidence: {conf_text}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    st.caption(st.session_state.live_status)
-
-    if st.session_state.live_last_audio:
-        st.audio(st.session_state.live_last_audio)
-
+    sentence = " ".join(st.session_state.get("sentence_words", [])).strip() or "---"
+    gloss_sequence = " + ".join(st.session_state.get("gloss_sequence", [])) or "---"
+    st.markdown("### Live English Sentence")
+    st.markdown(f"## {sentence}")
+    st.markdown("### Gloss Sequence")
+    st.write(gloss_sequence)
+    with st.expander("Raw live result", expanded=False):
+        st.json(st.session_state.get("last_raw", {}))
 
 st.divider()
-st.subheader("🗣️ Speech to Text for hearing speaker")
-st.caption("The hearing person can record or upload audio, and the deaf user reads the transcription.")
+st.subheader("Speech to Text for hearing speaker")
+st.caption("The hearing person can record or upload speech; Ishara converts it to text for the deaf user to read.")
 
-recorded_audio = None
-if hasattr(st, "audio_input"):
-    recorded_audio = st.audio_input("Record speech")
+audio_input = None
+try:
+    audio_input = st.audio_input("Record speech")
+except Exception:
+    audio_input = None
+uploaded_audio = st.file_uploader("Or upload audio", type=["wav", "mp3", "m4a", "ogg", "webm"], key="live_stt_upload")
+chosen_audio = audio_input or uploaded_audio
+if st.button("Convert Speech to Text", use_container_width=True):
+    _run_stt(chosen_audio)
+if st.session_state.get("stt_text"):
+    st.success("Speech converted to text")
+    st.markdown(f"## {st.session_state['stt_text']}")
 
-uploaded_audio = st.file_uploader(
-    "Or upload an audio file",
-    type=["wav", "mp3", "m4a", "webm", "ogg", "flac"],
-    key="live_stt_upload_online",
-)
-
-audio_source = recorded_audio or uploaded_audio
-
-if audio_source is not None:
-    st.audio(audio_source)
-
-    if st.button("Convert Speech to Text", type="primary", use_container_width=True):
-        suffix = Path(getattr(audio_source, "name", "speech.webm")).suffix or ".webm"
-        temp_audio = Path(tempfile.NamedTemporaryFile(delete=False, suffix=suffix).name)
-        temp_audio.write_bytes(audio_source.getvalue())
-
-        with st.spinner("Transcribing speech..."):
-            stt_result = transcribe_audio(audio_path=temp_audio)
-
-        try:
-            temp_audio.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-        if not stt_result.get("ok"):
-            st.error(stt_result.get("error", "Speech to Text failed."))
-            with st.expander("Debug", expanded=False):
-                st.json(stt_result)
-        else:
-            text = stt_result.get("text") or stt_result.get("transcription") or stt_result.get("sentence") or ""
-            st.session_state.live_stt_text = text
-            st.success("Transcription ready.")
-
-if st.session_state.live_stt_text:
-    st.markdown(
-        f"""
-        <div style="padding:20px;border-radius:16px;background:#f8fafc;border:1px solid #e5e7eb;">
-            <div style="font-size:13px;color:#64748b;margin-bottom:6px;">Speech transcription</div>
-            <div style="font-size:30px;font-weight:800;color:#0f172a;">{st.session_state.live_stt_text}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+if st.session_state.get("auto_live_running"):
+    if ctx and ctx.state.playing:
+        _process_live_chunk(
+            top_k=top_k,
+            chunk_ms=chunk_ms,
+            live_min_confidence=live_min_confidence,
+            release_confirm_confidence=release_confirm_confidence,
+            hold_confirm_confidence=hold_confirm_confidence,
+            stable_count_required=stable_count_required,
+            repeat_cooldown_ms=repeat_cooldown_ms,
+        )
+        time.sleep(max(0.05, loop_gap_ms / 1000.0))
+        st.rerun()
+    else:
+        st.info("Open the camera first, then click Start Auto.")

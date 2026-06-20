@@ -30,9 +30,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-import cv2
+try:
+    import cv2  # type: ignore
+except Exception:
+    cv2 = None
+
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import torch
 import torch.nn as nn
@@ -104,6 +108,40 @@ def age_to_group(age: float) -> str:
     if age < 60:
         return "adult"
     return "senior"
+
+
+# ============================================================
+# Cloud-safe image IO helpers
+# ============================================================
+
+
+def _read_image_as_bgr(image_path: str) -> np.ndarray:
+    """Read an image without depending on OpenCV GUI libraries."""
+    if cv2 is not None:
+        image = cv2.imread(image_path)
+        if image is not None:
+            return image
+
+    pil = Image.open(image_path).convert("RGB")
+    rgb = np.asarray(pil)
+    return rgb[:, :, ::-1].copy()  # RGB -> BGR compatible array
+
+
+def _bgr_array_to_pil_rgb(image_bgr: np.ndarray) -> Image.Image:
+    if cv2 is not None:
+        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    else:
+        rgb = image_bgr[:, :, ::-1]
+    return Image.fromarray(rgb.astype(np.uint8))
+
+
+def _write_bgr_image(output_path: str, image_bgr: np.ndarray) -> str:
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    if cv2 is not None:
+        cv2.imwrite(output_path, image_bgr)
+    else:
+        _bgr_array_to_pil_rgb(image_bgr).save(output_path)
+    return output_path
 
 
 # ============================================================
@@ -355,6 +393,11 @@ class AgeGenderInterface:
         self.age_bin_labels = list(age_bin_labels or ["0-10", "11-20", "21-30", "31-40", "41-50", "51-60", "60+"])
 
         self.face_detector: Optional[YOLOFaceDetector] = None
+        # On Streamlit Cloud, OpenCV may be installed headless or libGL may be unavailable.
+        # In that case, skip YOLO face detection and run age/gender on the full image.
+        if cv2 is None:
+            self.use_face_detection = False
+
         if self.use_face_detection and face_detector_path:
             self.face_detector = YOLOFaceDetector(
                 checkpoint_path=face_detector_path,
@@ -423,8 +466,7 @@ class AgeGenderInterface:
 
     @staticmethod
     def _bgr_to_pil_rgb(image_bgr: np.ndarray) -> Image.Image:
-        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        return Image.fromarray(rgb)
+        return _bgr_array_to_pil_rgb(image_bgr)
 
     def _scale_age(self, raw_age: float) -> float:
         if self.age_output_scale == "auto":
@@ -437,15 +479,13 @@ class AgeGenderInterface:
     @torch.no_grad()
     def predict(self, image_path: str, save_cropped_face_path: Optional[str] = None) -> Dict[str, Any]:
         image_path = _ensure_exists(image_path, "Image")
-        image_bgr = cv2.imread(image_path)
-        if image_bgr is None:
-            raise ValueError(f"Could not read image: {image_path}")
+        image_bgr = _read_image_as_bgr(image_path)
 
         face_bgr, face_info = self._select_face(image_bgr)
 
         if save_cropped_face_path:
             os.makedirs(os.path.dirname(save_cropped_face_path) or ".", exist_ok=True)
-            cv2.imwrite(save_cropped_face_path, face_bgr)
+            _write_bgr_image(save_cropped_face_path, face_bgr)
 
         face_pil = self._bgr_to_pil_rgb(face_bgr)
 
@@ -484,22 +524,31 @@ class AgeGenderInterface:
 
     def annotate_image(self, image_path: str, result: Dict[str, Any], output_path: str) -> str:
         image_path = _ensure_exists(image_path, "Image")
-        image = cv2.imread(image_path)
-        if image is None:
-            raise ValueError(f"Could not read image: {image_path}")
+        image = _read_image_as_bgr(image_path)
 
         label = f"{result.get('gender', 'unknown')} | age {result.get('age', '?')}"
         bbox = result.get("bbox")
+
+        if cv2 is not None:
+            if bbox:
+                x1, y1, x2, y2 = [int(v) for v in bbox]
+                cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                y_text = max(20, y1 - 10)
+                cv2.putText(image, label, (x1, y_text), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            else:
+                cv2.putText(image, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            return _write_bgr_image(output_path, image)
+
+        pil = _bgr_array_to_pil_rgb(image)
+        draw = ImageDraw.Draw(pil)
         if bbox:
             x1, y1, x2, y2 = [int(v) for v in bbox]
-            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            y_text = max(20, y1 - 10)
-            cv2.putText(image, label, (x1, y_text), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            draw.rectangle([x1, y1, x2, y2], outline="green", width=2)
+            draw.text((x1, max(0, y1 - 18)), label, fill="green")
         else:
-            cv2.putText(image, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-
+            draw.text((20, 20), label, fill="green")
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        cv2.imwrite(output_path, image)
+        pil.save(output_path)
         return output_path
 
     def predict_and_save(

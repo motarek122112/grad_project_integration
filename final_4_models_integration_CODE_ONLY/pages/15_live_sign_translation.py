@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import sys
@@ -194,7 +194,7 @@ def _predict_live_chunk(frames: List[Any], top_k: int) -> Dict[str, Any]:
             pass
 
 
-class LowLatencyVideoProcessor(VideoProcessorBase):
+class LowLatencyVideoProcessor:
     """Stores the latest camera frames without running inference in recv().
 
     This keeps camera preview smoother. Prediction happens only every tick from the
@@ -230,8 +230,8 @@ class LowLatencyVideoProcessor(VideoProcessorBase):
 # -----------------------------------------------------------------------------
 # UI
 # -----------------------------------------------------------------------------
-st.markdown('<div class="ishara-live-title">🎥 Live Sign Translation</div>', unsafe_allow_html=True)
-st.markdown('<div class="ishara-muted">Auto live mode inside Streamlit — no separate FastAPI server.</div>', unsafe_allow_html=True)
+st.markdown('<div class="ishara-live-title">ðŸŽ¥ Live Sign Translation</div>', unsafe_allow_html=True)
+st.markdown('<div class="ishara-muted">Auto live mode inside Streamlit â€” no separate FastAPI server.</div>', unsafe_allow_html=True)
 
 with st.expander("Live settings", expanded=False):
     preset = st.selectbox(
@@ -450,9 +450,9 @@ if st.session_state.live_auto_enabled:
                     st.session_state.live_glosses.append(gloss)
                 st.session_state.live_last_word = word
                 st.session_state.live_last_accept_ts = now
-                st.session_state.live_status = f"Accepted: {word} ({confidence:.3f}) • {elapsed_ms} ms"
+                st.session_state.live_status = f"Accepted: {word} ({confidence:.3f}) â€¢ {elapsed_ms} ms"
             elif confidence >= min_conf:
-                st.session_state.live_status = f"Candidate: {word} ({confidence:.3f}) • hold sign steady"
+                st.session_state.live_status = f"Candidate: {word} ({confidence:.3f}) â€¢ hold sign steady"
             elif confidence <= release_conf:
                 st.session_state.live_status = f"Release / no stable sign ({confidence:.3f})"
             else:
@@ -496,3 +496,4 @@ with st.expander("Speech to Text for hearing speaker", expanded=False):
 
 with st.expander("Raw live result", expanded=False):
     st.json(st.session_state.live_last_raw)
+

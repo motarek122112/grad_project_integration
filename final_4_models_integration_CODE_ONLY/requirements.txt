@@ -3,7 +3,6 @@ fastapi
 uvicorn[standard]
 python-multipart
 pydantic
-
 # Core ML
 numpy
 scipy
@@ -11,28 +10,22 @@ torch
 torchvision
 opencv-python-headless
 Pillow
-
 # Sign Language -> Text
-mediapipe
-
 # Age/Gender
 ultralytics
 timm
-
 # Text to Speech + Speech to Text
 librosa
 soundfile
 unidecode
-
-
 streamlit>=1.40,<2
-streamlit-webrtc>=0.72,<1
-av>=12
 kokoro>=0.9.4
 soundfile
-
 transformers==4.46.3
 accelerate==1.0.1
 librosa>=0.10.2
 soundfile
 sentencepiece
+streamlit-webrtc>=0.72,<1
+av>=12
+mediapipe==0.10.14

@@ -8,7 +8,6 @@ numpy
 scipy
 torch
 torchvision
-opencv-python-headless
 Pillow
 # Sign Language -> Text
 # Age/Gender
@@ -29,3 +28,4 @@ sentencepiece
 streamlit-webrtc>=0.72,<1
 av>=12
 mediapipe==0.10.14
+opencv-python-headless==4.11.0.86

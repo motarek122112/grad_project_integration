@@ -1,0 +1,52 @@
+__pycache__/
+*.pyc
+*.ipynb
+*.npy
+*.zip
+*.bak
+*.backup*
+*.backup_*
+landmark_cache*
+outputs/
+uploads/
+.env
+.streamlit/secrets.toml
+.git_old_backup/
+
+# root duplicate files/folders outside the real app folder
+/backend/
+/frontend/
+/interfaces/
+/resources/
+/samples/
+/docs/
+/models/
+README.md
+cli.py
+main.py
+requirements.txt
+run_app.bat
+tts_inference.py
+.env.example
+
+# local app generated data
+final_4_models_integration_CODE_ONLY/data/*.sqlite3
+final_4_models_integration_CODE_ONLY/outputs/
+final_4_models_integration_CODE_ONLY/uploads/
+
+# patch/readme/helper leftovers
+final_4_models_integration_CODE_ONLY/README_* 
+final_4_models_integration_CODE_ONLY/*backup*
+final_4_models_integration_CODE_ONLY/*rollback*
+final_4_models_integration_CODE_ONLY/apply_*patch*.py
+final_4_models_integration_CODE_ONLY/apply_live_stt_speed_fix.py
+final_4_models_integration_CODE_ONLY/apply_online_live_no_api_patch.py
+final_4_models_integration_CODE_ONLY/apply_speed_emergency_feedback_patch.py
+final_4_models_integration_CODE_ONLY/apply_streamlit_webrtc_requirements_fix.py
+final_4_models_integration_CODE_ONLY/fix_stt_path_error.py
+
+# wrong folder, correct one is .streamlit
+final_4_models_integration_CODE_ONLY/streamlit/
+
+# extracted model folders - keep only .pth/.pt files
+final_4_models_integration_CODE_ONLY/models/*/

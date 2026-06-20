@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+grad_integration/
+
+# Local user database
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Private user profile images
+data/profile_images/
+
+# Runtime files
+uploads/
+outputs/
+
+# Keep empty runtime folders when needed
+!uploads/.gitkeep
+!outputs/.gitkeep
+
+# Secrets
+.env
+.streamlit/secrets.toml
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

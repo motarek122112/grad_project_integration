@@ -1,0 +1,254 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #f4f6fb;
+  color: #111;
+}
+
+.topbar {
+  background: #111827;
+  color: white;
+  padding: 24px 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.topbar p {
+  margin: 6px 0 0;
+  color: #cfd6e4;
+}
+
+.status-btn {
+  padding: 12px 18px;
+  border: none;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #111827;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.container {
+  width: min(1250px, 94vw);
+  margin: 30px auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.card {
+  background: white;
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e8eaf2;
+}
+
+.wide-card {
+  grid-column: 1 / -1;
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.hint {
+  margin: 0 0 16px;
+  color: #666;
+  font-size: 14px;
+}
+
+input[type="file"] {
+  width: 100%;
+  padding: 12px;
+  border: 1px dashed #9ca3af;
+  border-radius: 12px;
+  background: #f9fafb;
+}
+
+textarea {
+  width: 100%;
+  min-height: 110px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid #d1d5db;
+  resize: vertical;
+  font-size: 16px;
+}
+
+.btn-row {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+button {
+  padding: 11px 16px;
+  border: none;
+  border-radius: 11px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.camera-btn {
+  background: #16a34a;
+}
+
+.final-result {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 14px;
+  background: #f3f6ff;
+  border: 1px solid #d7e0ff;
+}
+
+.final-result h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  color: #374151;
+}
+
+.final-result div {
+  font-size: 23px;
+  font-weight: 800;
+  color: #111827;
+  line-height: 1.4;
+}
+
+.audio-player {
+  width: 100%;
+  margin-top: 15px;
+  display: none;
+}
+
+pre {
+  margin-top: 16px;
+  background: #0b1020;
+  color: #dbeafe;
+  border-radius: 14px;
+  padding: 15px;
+  overflow-x: auto;
+  max-height: 360px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Camera Modal */
+
+.camera-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.68);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+}
+
+.camera-modal.hidden {
+  display: none;
+}
+
+.camera-panel {
+  width: min(760px, 94vw);
+  background: white;
+  border-radius: 20px;
+  padding: 22px;
+  text-align: center;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+}
+
+.camera-panel h3 {
+  margin: 0 0 14px;
+  font-size: 24px;
+}
+
+#cameraPreview {
+  width: 100%;
+  max-height: 440px;
+  background: #111;
+  border-radius: 16px;
+  object-fit: contain;
+}
+
+.camera-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.camera-actions button {
+  padding: 11px 15px;
+  border-radius: 11px;
+  border: none;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.camera-actions button:nth-child(1) {
+  background: #16a34a;
+}
+
+.camera-actions button:nth-child(2) {
+  background: #dc2626;
+}
+
+.camera-actions button:nth-child(3) {
+  background: #2563eb;
+}
+
+.camera-actions button:nth-child(4) {
+  background: #6b7280;
+}
+
+#recordStatus {
+  margin-top: 13px;
+  font-weight: 700;
+  color: #374151;
+}
+
+@media (max-width: 850px) {
+  .container {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    padding: 22px;
+  }
+
+  .topbar h1 {
+    font-size: 23px;
+  }
+
+  .final-result div {
+    font-size: 20px;
+  }
+}

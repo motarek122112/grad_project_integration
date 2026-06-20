@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Sign Translation</title>
+  <link rel="stylesheet" href="/frontend/style.css" />
+  <style>
+    body { background:#f3f4f6; }
+    .live-page-wrap { width:min(1200px,94%); margin:0 auto; padding:28px 0 60px; }
+    .live-topbar { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; }
+    .live-topbar a { text-decoration:none; color:#0f766e; font-weight:800; }
+    .live-title { margin:0; font-size:32px; color:#111827; }
+    .live-subtitle { margin:8px 0 0; color:#6b7280; font-size:18px; }
+    .live-layout { display:grid; grid-template-columns:1.1fr .9fr; gap:20px; align-items:start; }
+    .live-panel { background:white; border:1px solid #e5e7eb; border-radius:18px; padding:20px; box-shadow:0 8px 24px rgba(0,0,0,.06); }
+    #livePreview { width:100%; max-height:460px; background:#000; border-radius:14px; object-fit:cover; }
+    .live-controls { display:flex; flex-wrap:wrap; gap:12px; margin:16px 0; align-items:center; }
+    .live-status { margin-top:12px; background:#f3f4f6; color:#111827; padding:14px; border-radius:12px; font-weight:800; }
+    .live-mini-card { background:#f9fafb; border:1px solid #e5e7eb; border-radius:14px; padding:16px; margin-bottom:14px; }
+    .live-mini-card h3 { margin:0 0 8px; font-size:17px; color:#111827; }
+    .live-current-word { font-size:36px; font-weight:900; color:#0f766e; letter-spacing:.5px; }
+    .live-confidence { font-size:15px; color:#4b5563; margin-top:6px; }
+    .live-sentence { font-size:23px; font-weight:800; color:#111827; line-height:1.45; }
+    #liveRawResult { max-height:300px; overflow:auto; background:#111827; color:#d1fae5; padding:12px; border-radius:10px; font-size:12px; }
+    @media(max-width:900px){ .live-layout{grid-template-columns:1fr;} .live-title{font-size:26px;} }
+  </style>
+</head>
+<body>
+  <div class="live-page-wrap">
+    <div class="live-topbar">
+      <div>
+        <h1 class="live-title">Live Sign Translation</h1>
+        <p class="live-subtitle">Near real-time sign recognition using short live camera chunks.</p>
+      </div>
+      <a href="/">← Back to Home</a>
+    </div>
+
+    <section class="live-layout">
+      <div class="live-panel">
+        <video id="livePreview" autoplay muted playsinline></video>
+
+        <div class="live-controls">
+          <button onclick="openLiveTranslator()">Open Camera</button>
+          <button onclick="startLiveTranslation()" id="liveStartBtn" disabled>Start Live</button>
+          <button onclick="stopLiveTranslation()" id="liveStopBtn" disabled>Stop</button>
+          <button onclick="clearLiveSentence()">Clear Sentence</button>
+          <button onclick="speakLiveSentence()">Speak Sentence</button>
+          <button onclick="closeLiveCamera()">Close Camera</button>
+        </div>
+
+        <div id="liveStatus" class="live-status">Camera is closed.</div>
+      </div>
+
+      <div class="live-panel">
+        <div class="live-mini-card">
+          <h3>Current Prediction</h3>
+          <div id="liveCurrentWord" class="live-current-word">---</div>
+          <div id="liveConfidence" class="live-confidence">Confidence: ---</div>
+        </div>
+
+        <div class="live-mini-card">
+          <h3>Gloss Sequence</h3>
+          <div id="liveGlossSequence" class="live-sentence">---</div>
+        </div>
+
+        <div class="live-mini-card">
+          <h3>Live English Sentence</h3>
+          <div id="liveEnglishSentence" class="live-sentence">---</div>
+        </div>
+
+        <audio id="liveTtsAudio" controls style="display:none; margin-top:12px; width:100%;"></audio>
+
+        <details style="margin-top:14px;">
+          <summary>Raw Live Result</summary>
+          <pre id="liveRawResult">---</pre>
+        </details>
+      </div>
+    </section>
+  </div>
+
+  <script src="/frontend/sign_live.js"></script>
+</body>
+</html>

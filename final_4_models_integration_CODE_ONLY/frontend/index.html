@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Graduation Project - AI Integration</title>
+  <link rel="stylesheet" href="/frontend/style.css" />
+</head>
+
+<body>
+  <header class="topbar">
+    <div>
+      <h1>AI Assistive Communication System</h1>
+      <p>Sign Language, Speech, TTS, Age & Gender Prediction</p>
+    </div>
+
+    <button onclick="checkStatus()" class="status-btn">Check System Status</button>
+  </header>
+
+  <main class="container">
+
+    <!-- System Status -->
+    <section class="card wide-card">
+      <h2>System Status</h2>
+      <p class="hint">Check if all models and APIs are ready.</p>
+      <pre id="statusResult">Click "Check System Status".</pre>
+    </section>
+
+    <!-- Single Sign -->
+    <section class="card">
+      <h2>1) Single Sign Video → Text</h2>
+      <p class="hint">Upload or record one isolated sign.</p>
+
+      <input id="signVideo" type="file" accept="video/*" />
+
+      <div class="btn-row">
+        <button onclick="submitVideoFile('/api/sign/single', 'signVideo', 'signResult')">
+          Predict
+        </button>
+
+        <button class="camera-btn" onclick="openSignCamera('/api/sign/single', 'signResult', 'single')">
+          📷 Camera
+        </button>
+      </div>
+
+      <div class="final-result">
+        <h3>Predicted Sign</h3>
+        <div id="singleSignBox">---</div>
+      </div>
+
+      <pre id="signResult"></pre>
+    </section>
+
+    <!-- Multiple Sign -->
+    <section class="card">
+      <h2>2) Multi-Sign Video → Sentence</h2>
+      <p class="hint">Use a clear pause between signs.</p>
+
+      <input id="sentenceVideo" type="file" accept="video/*" />
+
+      <div class="btn-row">
+        <button onclick="predictSentenceFromFile()">
+          Predict Sentence
+        </button>
+
+        <button class="camera-btn" onclick="openSignCamera('/api/sign/sentence', 'sentenceResult', 'sentence')">
+          📷 Camera
+        </button>
+      </div>
+
+      <div class="final-result">
+        <h3>Full Sentence</h3>
+        <div id="fullSentenceBox">---</div>
+      </div>
+
+      <pre id="sentenceResult"></pre>
+    </section>
+
+    <!-- Sign To Speech -->
+    <section class="card">
+      <h2>3) Sign Video → Text → Speech</h2>
+      <p class="hint">Upload or record a sign video, then generate speech.</p>
+
+      <input id="signSpeechVideo" type="file" accept="video/*" />
+
+      <div class="btn-row">
+        <button onclick="submitVideoFile('/api/sign/to-speech', 'signSpeechVideo', 'signSpeechResult', true)">
+          Generate Speech
+        </button>
+
+        <button class="camera-btn" onclick="openSignCamera('/api/sign/to-speech', 'signSpeechResult', 'speech')">
+          📷 Camera
+        </button>
+      </div>
+
+      <div class="final-result">
+        <h3>Generated Text</h3>
+        <div id="signSpeechTextBox">---</div>
+      </div>
+
+      <audio id="signSpeechAudio" controls class="audio-player"></audio>
+
+      <pre id="signSpeechResult"></pre>
+    </section>
+
+    <!-- Text To Speech -->
+    <section class="card">
+      <h2>4) Text → Speech</h2>
+      <p class="hint">Type text and generate audio.</p>
+
+      <textarea id="ttsText" placeholder="Example: I want dinner."></textarea>
+
+      <div class="btn-row">
+        <button onclick="textToSpeech()">Generate Speech</button>
+      </div>
+
+      <audio id="ttsAudio" controls class="audio-player"></audio>
+
+      <pre id="ttsResult"></pre>
+    </section>
+
+    <!-- Speech To Text -->
+    <section class="card">
+      <h2>5) Speech → Text</h2>
+      <p class="hint">Upload an audio file.</p>
+
+      <input id="speechAudio" type="file" accept="audio/*" />
+
+      <div class="btn-row">
+        <button onclick="speechToText()">Transcribe</button>
+      </div>
+
+      <div class="final-result">
+        <h3>Transcribed Text</h3>
+        <div id="speechTextBox">---</div>
+      </div>
+
+      <pre id="speechResult"></pre>
+    </section>
+
+    <!-- Age Gender -->
+    <section class="card">
+      <h2>6) Image → Age & Gender</h2>
+      <p class="hint">Upload an image with a clear face.</p>
+
+      <input id="ageImage" type="file" accept="image/*" />
+
+      <div class="btn-row">
+        <button onclick="ageGenderPredict()">Predict</button>
+      </div>
+
+      <div class="final-result">
+        <h3>Prediction</h3>
+        <div id="ageGenderBox">---</div>
+      </div>
+
+      <pre id="ageResult"></pre>
+    </section>
+
+  </main>
+
+  <!-- Camera Modal -->
+  <div id="cameraModal" class="camera-modal hidden">
+    <div class="camera-panel">
+      <h3>Record Sign Video</h3>
+
+      <video id="cameraPreview" autoplay muted playsinline></video>
+
+      <div class="camera-actions">
+        <button onclick="startSignRecording()">Start Recording</button>
+        <button onclick="stopSignRecording()" id="stopRecordBtn" disabled>Stop</button>
+        <button onclick="sendRecordedSign()" id="sendRecordBtn" disabled>Use This Video</button>
+        <button onclick="closeSignCamera()">Cancel</button>
+      </div>
+
+      <p id="recordStatus">Camera ready.</p>
+    </div>
+  </div>
+
+  <script src="/frontend/app.js"></script>
+</body>
+</html>

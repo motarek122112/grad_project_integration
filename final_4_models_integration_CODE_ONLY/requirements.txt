@@ -9,7 +9,8 @@ numpy
 scipy
 torch
 torchvision
-opencv-python-headlesspillow
+opencv-python-headless
+Pillow
 
 # Sign Language -> Text
 mediapipe

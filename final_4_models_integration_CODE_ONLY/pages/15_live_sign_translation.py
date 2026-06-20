@@ -3,12 +3,15 @@ from __future__ import annotations
 import os
 import sys
 import time
+import json
+import html
 import tempfile
 from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -307,20 +310,83 @@ with c4:
         st.rerun()
 
 sentence = " ".join(st.session_state.live_words).strip()
-if st.button("Speak Sentence", use_container_width=True):
-    if not sentence:
-        st.warning("No sentence to speak yet.")
-    elif synthesize_speech is None:
-        st.error("TTS adapter is not available.")
-    else:
-        try:
-            user = _user_profile()
-            out = synthesize_speech(sentence, gender=user.get("gender"), age=user.get("age"))
-            audio_path = out.get("audio_path") if isinstance(out, dict) else out
-            if audio_path:
-                st.audio(str(audio_path))
-        except Exception as exc:
-            st.error(f"Speech failed: {exc}")
+
+
+def _render_browser_speak_sentence_button(text_to_speak: str) -> None:
+    """Speak instantly in the user's browser.
+
+    This avoids slow server-side TTS on Streamlit Cloud and works as a real
+    user-click action, so Chrome/Edge do not block the audio.
+    """
+
+    safe_text = str(text_to_speak or "").strip()
+    js_text = json.dumps(safe_text)
+    disabled = "disabled" if not safe_text else ""
+    opacity = "0.45" if not safe_text else "1"
+    label = "Speak Sentence" if safe_text else "Speak Sentence"
+
+    components.html(
+        f"""
+        <div style="width:100%;">
+          <button id="isharaSpeakBtn" {disabled}
+            style="
+              width:100%; min-height:54px; border-radius:14px;
+              border:1px solid rgba(148,163,184,.35);
+              background:rgba(15,23,42,.55); color:#ffffff;
+              font-weight:800; font-size:16px; cursor:pointer; opacity:{opacity};
+            ">
+            {html.escape(label)}
+          </button>
+          <div id="isharaSpeakStatus" style="font-family:Arial,sans-serif;font-size:12px;opacity:.72;margin-top:6px;color:#cbd5e1;"></div>
+        </div>
+        <script>
+          const btn = document.getElementById("isharaSpeakBtn");
+          const statusEl = document.getElementById("isharaSpeakStatus");
+          const text = {js_text};
+
+          function pickVoice() {{
+            const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+            return voices.find(v => (v.lang || '').toLowerCase().startsWith('en') && /female|zira|samantha|google/i.test(v.name))
+                || voices.find(v => (v.lang || '').toLowerCase().startsWith('en'))
+                || voices[0]
+                || null;
+          }}
+
+          function speakNow() {{
+            if (!text || !text.trim()) {{
+              if (statusEl) statusEl.textContent = "No sentence to speak yet.";
+              return;
+            }}
+            if (!('speechSynthesis' in window)) {{
+              if (statusEl) statusEl.textContent = "Browser speech is not supported here.";
+              return;
+            }}
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'en-US';
+            utterance.rate = 1.0;
+            utterance.pitch = 1.0;
+            const voice = pickVoice();
+            if (voice) utterance.voice = voice;
+            utterance.onstart = () => {{ if (statusEl) statusEl.textContent = "Speaking..."; }};
+            utterance.onend = () => {{ if (statusEl) statusEl.textContent = ""; }};
+            utterance.onerror = () => {{ if (statusEl) statusEl.textContent = "Speech failed. Try clicking again."; }};
+            window.speechSynthesis.speak(utterance);
+          }}
+
+          if (btn) {{
+            btn.onclick = speakNow;
+          }}
+          if (window.speechSynthesis) {{
+            window.speechSynthesis.onvoiceschanged = () => pickVoice();
+          }}
+        </script>
+        """,
+        height=82,
+    )
+
+
+_render_browser_speak_sentence_button(sentence)
 
 left, right = st.columns([1.25, 1])
 with left:
